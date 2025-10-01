@@ -5,3 +5,4 @@ pandas>=2.2,<3.0
 rapidfuzz>=3.6,<4.0
 python-dotenv
 firebase-admin
+pybaseball==2.x.x

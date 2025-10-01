@@ -4,7 +4,7 @@ from fastapi import Depends
 
 def initialize_firebase():
     if not firebase_admin._apps:
-        credential = credentials.Certificate("utils/cybermetrics-18a4d-firebase-adminsdk-fbsvc-ff92be56de.json")
+        credential = credentials.Certificate("utils/cybermetrics.json")
         firebase_admin.initialize_app(credential)
     return firestore.client()
 

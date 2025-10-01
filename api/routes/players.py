@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from utils.players_search import players_index
 from utils.firebase_client import get_firebase_database 
 
@@ -11,7 +11,7 @@ def autocomplete_search(q: str):
 
 @router.post("/add_player")
 async def add_players(player_info: dict, db = Depends(get_firebase_database)):
-    document_reference = db.collection('saved_players').add(player_info)
+    document_reference = db.collection('saved_players').document(str(player_info["id"])).set(player_info)
     return {"message": "Player data added successfully"}
 
 @router.get("/get_player")
@@ -24,3 +24,10 @@ async def get_player(db = Depends(get_firebase_database)):
         saved_players.append(player.to_dict())
     
     return saved_players
+
+@router.delete("/delete_player")
+async def delete_player(player_id: str = Query(...), db = Depends(get_firebase_database)):
+    db.collection('saved_players').document(player_id).delete()
+    return {"message": "Player deleted successfully"}
+    
+
