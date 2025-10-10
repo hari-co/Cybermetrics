@@ -8,6 +8,9 @@ import time
 import pandas as pd
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class PlayerStatsService:
     """Service for fetching and storing MLB player hitting statistics"""
@@ -19,8 +22,8 @@ class PlayerStatsService:
         self._update_lock = asyncio.Lock()
         self._is_updating = False
         self._executor = ThreadPoolExecutor(max_workers=1)  # Run blocking I/O in thread
-        self._batch_size = 100  # Process players in batches to avoid rate limits
-        self._batch_delay = 2.0  # Delay between batches (seconds)
+        self._batch_size = 50  # Process players in batches to avoid rate limits (reduced from 100)
+        self._batch_delay = 5.0  # Delay between batches (seconds) (increased from 2.0)
     
     def _rate_limit(self):
         """Simple rate limiting decorator"""
@@ -96,13 +99,19 @@ class PlayerStatsService:
             
             # Fetch stats for each requested season
             for season in seasons:
-                print(f"\nFetching stats for {season} season...")
+                logger.info("=" * 60)
+                logger.info(f"Fetching stats for {season} season from FanGraphs...")
                 self._rate_limit()
                 
-                # Fetch batting stats from Fangraphs
-                stats_df = fg_batting_data(season, season, qual=min_pa, split_seasons=True)
+                try:
+                    # Fetch batting stats from Fangraphs
+                    stats_df = fg_batting_data(season, season, qual=min_pa, split_seasons=True)
+                    logger.info("Successfully fetched data from FanGraphs")
+                except Exception as e:
+                    logger.error(f"ERROR fetching from FanGraphs: {str(e)}")
+                    raise
                 
-                print(f"Found {len(stats_df)} players for {season} season")
+                logger.info(f"Found {len(stats_df)} players for {season} season")
                 
                 # Process players in batches to avoid Firebase rate limits
                 total_players = len(stats_df)
@@ -110,7 +119,13 @@ class PlayerStatsService:
                     batch_end = min(batch_num + self._batch_size, total_players)
                     batch_df = stats_df.iloc[batch_num:batch_end]
                     
-                    print(f"Processing batch {batch_num//self._batch_size + 1}/{(total_players + self._batch_size - 1)//self._batch_size} ({len(batch_df)} players)...")
+                    logger.info(f"Processing batch {batch_num//self._batch_size + 1}/{(total_players + self._batch_size - 1)//self._batch_size} ({len(batch_df)} players)...")
+                    
+                    # Use Firebase batch writes for efficiency (max 500 operations per batch)
+                    # We need 2 writes per player (player info + season stats), so max 250 players per Firebase batch
+                    # But we're already processing 50 players at a time, so we're good
+                    firebase_batch = self.db.batch()
+                    batch_operations = 0
                     
                     # Process each player in the batch
                     for idx, row in batch_df.iterrows():
@@ -134,26 +149,37 @@ class PlayerStatsService:
                             if mlb_id:
                                 player_info['mlb_player_id'] = mlb_id
                             
-                            # Update player document
-                            player_ref.set(player_info, merge=True)
+                            # Add player info to batch
+                            firebase_batch.set(player_ref, player_info, merge=True)
+                            batch_operations += 1
                             
-                            # Store season stats in subcollection
+                            # Add season stats to batch
                             season_ref = player_ref.collection('seasons').document(str(season))
                             stats_dict = player_stats.model_dump()
-                            season_ref.set(stats_dict)
+                            firebase_batch.set(season_ref, stats_dict)
+                            batch_operations += 1
                             
                             total_players_updated += 1
                             
                         except Exception as e:
-                            print(f"Error processing player {row.get('Name', 'Unknown')}: {str(e)}")
+                            logger.error(f"Error processing player {row.get('Name', 'Unknown')}: {str(e)}")
                             total_players_with_errors += 1
                             continue
                     
-                    print(f"Batch complete. Total: {total_players_updated} players updated")
+                    # Commit the entire batch at once
+                    try:
+                        logger.info(f"Committing batch with {batch_operations} operations to Firebase...")
+                        firebase_batch.commit()
+                        logger.info(f"Successfully committed batch to Firebase")
+                    except Exception as fb_error:
+                        logger.error(f"Firebase batch commit ERROR: {str(fb_error)}")
+                        raise
+                    
+                    logger.info(f"Batch complete. Total: {total_players_updated} players updated")
                     
                     # Rate limit between batches to avoid Firebase quota
                     if batch_end < total_players:
-                        print(f"Waiting {self._batch_delay}s before next batch...")
+                        logger.info(f"Waiting {self._batch_delay}s before next batch...")
                         time.sleep(self._batch_delay)
             
             return UpdatePlayerStatsResponse(

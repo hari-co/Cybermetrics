@@ -1,6 +1,9 @@
 import firebase_admin
 from firebase_admin import credentials, firestore, auth
 from .settings import settings
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 class FirebaseService:
     def __init__(self):
@@ -16,8 +19,8 @@ class FirebaseService:
                 firebase_admin.initialize_app(cred)
             self.db = firestore.client()
         except Exception as e:
-            print(f"Warning: Firebase initialization failed: {e}")
-            print("Make sure to set up your Firebase credentials before running the server.")
+            logger.warning(f"Firebase initialization failed: {e}")
+            logger.warning("Make sure to set up your Firebase credentials before running the server.")
     
     def is_connected(self) -> bool:
         """Check if Firebase is connected"""
