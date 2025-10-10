@@ -168,7 +168,6 @@ export default function DashboardPage() {
                       <div className={styles.playerInfo}>
                         <span className={styles.playerName}>{player.name}</span>
                         <span className={styles.playerMeta}>{player.years_active}</span>
-                        <span className={styles.playerId}>ID: {player.id}</span>
                       </div>
                     </div>
                     <Button 
@@ -211,7 +210,6 @@ export default function DashboardPage() {
                       <div className={styles.playerInfo}>
                         <span className={styles.playerName}>{player.name}</span>
                         {player.years_active && <span className={styles.playerMeta}>{player.years_active}</span>}
-                        <span className={styles.playerId}>ID: {player.id}</span>
                       </div>
                     </div>
                     <Button 

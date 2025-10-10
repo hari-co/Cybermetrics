@@ -7,6 +7,7 @@ from functools import wraps
 import time
 import pandas as pd
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 class PlayerStatsService:
     """Service for fetching and storing MLB player hitting statistics"""
@@ -17,6 +18,7 @@ class PlayerStatsService:
         self._min_request_interval = 0.5  # 500ms between requests for rate limiting
         self._update_lock = asyncio.Lock()
         self._is_updating = False
+        self._executor = ThreadPoolExecutor(max_workers=1)  # Run blocking I/O in thread
     
     def _rate_limit(self):
         """Simple rate limiting decorator"""
@@ -80,47 +82,22 @@ class PlayerStatsService:
             seasons = list(range(start_year, end_year + 1))
             
             # Import pybaseball (lazy import to avoid startup delays)
-            from pybaseball import fg_batting_data, chadwick_register
+            from pybaseball import fg_batting_data
             
             total_players_updated = 0
             total_players_with_errors = 0
             
-            # Get ID mapping from Fangraphs to MLB IDs
-            print("Fetching player ID mapping...")
-            self._rate_limit()
-            id_mapping_df = chadwick_register()
-            
-            # Create a mapping dictionary for quick lookups
-            # Filter out players without MLB IDs
-            valid_mappings = id_mapping_df[
-                (id_mapping_df['key_mlbam'].notna()) & 
-                (id_mapping_df['key_fangraphs'].notna()) &
-                (id_mapping_df['key_fangraphs'] != -1)
-            ].copy()
-            valid_mappings['key_fangraphs'] = valid_mappings['key_fangraphs'].astype(int)
-            valid_mappings['key_mlbam'] = valid_mappings['key_mlbam'].astype(int)
-            
-            fangraphs_to_mlb = dict(zip(
-                valid_mappings['key_fangraphs'],
-                valid_mappings['key_mlbam']
-            ))
-            
-            # Also create name-based lookup for fallback (only players with MLB IDs)
-            name_to_mlb = {}
-            mlb_players = id_mapping_df[id_mapping_df['key_mlbam'].notna()].copy()
-            for _, row in mlb_players.iterrows():
-                if pd.notna(row['name_first']) and pd.notna(row['name_last']):
-                    full_name = f"{row['name_first']} {row['name_last']}".lower().strip()
-                    mlb_id = int(row['key_mlbam'])
-                    name_to_mlb[full_name] = mlb_id
-            
-            # Fetch stats for each season
+            # Fetch stats for each requested season
             for season in seasons:
                 print(f"\nFetching stats for {season} season...")
                 self._rate_limit()
                 
-                # Fetch batting stats from Fangraphs via pybaseball
-                stats_df = fg_batting_data(season, season, qual=min_pa, split_seasons=True)
+                # Fetch batting stats from Fangraphs (run in thread to avoid blocking)
+                loop = asyncio.get_event_loop()
+                stats_df = await loop.run_in_executor(
+                    self._executor,
+                    lambda: fg_batting_data(season, season, qual=min_pa, split_seasons=True)
+                )
                 
                 print(f"Found {len(stats_df)} players for {season} season")
                 
@@ -129,19 +106,8 @@ class PlayerStatsService:
                     try:
                         # Get Fangraphs ID (always available)
                         fangraphs_id = int(row['IDfg'])
-                        
-                        # Try to get MLB ID from Fangraphs ID mapping
-                        mlb_id = fangraphs_to_mlb.get(fangraphs_id)
-                        
-                        # Fallback to name-based lookup if Fangraphs mapping doesn't exist
-                        if not mlb_id:
-                            player_name = str(row['Name']).lower().strip()
-                            mlb_id = name_to_mlb.get(player_name)
-                            
-                            if mlb_id:
-                                print(f"Info: Found MLB ID via name lookup for {row['Name']} (MLB ID: {mlb_id})")
-                            else:
-                                print(f"Info: No MLB ID found for {row['Name']} (FG ID: {fangraphs_id}) - storing with FG ID only")
+                        player_name = str(row.get('Name', ''))
+                        mlb_id = None  # Skip MLB ID (broken endpoint)
                         
                         # Map dataframe columns to our model
                         player_stats = self._map_stats_to_model(row, fangraphs_id, mlb_id, season)
@@ -149,18 +115,18 @@ class PlayerStatsService:
                         # Store in Firebase: players/{fangraphs_id}
                         player_ref = self.db.collection('players').document(str(fangraphs_id))
                         
-                        # Store/update player info (static fields that don't change)
+                        # Store/update player info (static fields)
                         player_info = {
                             'fangraphs_id': fangraphs_id,
-                            'name': str(row.get('Name', '')),
+                            'name': player_name,
                         }
                         if mlb_id:
                             player_info['mlb_player_id'] = mlb_id
                         
-                        # Update player document with static info
+                        # Update player document
                         player_ref.set(player_info, merge=True)
                         
-                        # Store season stats in subcollection: players/{fangraphs_id}/seasons/{season}
+                        # Store season stats in subcollection
                         season_ref = player_ref.collection('seasons').document(str(season))
                         stats_dict = player_stats.model_dump()
                         season_ref.set(stats_dict)

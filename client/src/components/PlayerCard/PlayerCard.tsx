@@ -3,6 +3,8 @@ import { PlayerDetail, PlayerHittingStats } from "@/api/players";
 import { playerActions } from "@/actions/players";
 import Button from "@/components/Button";
 import Spinner from "@/components/Spinner";
+import { StatItem } from "./StatItem";
+import { StatsCategory } from "./StatsCategory";
 import styles from "./PlayerCard.module.css";
 
 interface PlayerCardProps {
@@ -23,7 +25,7 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
       setIsLoading(true);
       const result = await playerActions.getPlayerDetail(playerId);
       
-      if (result.success) {
+      if (result.success && result.data) {
         setPlayer(result.data);
         
         // Fetch stats using Fangraphs ID if available
@@ -32,7 +34,7 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
         const statsResult = await playerActions.getPlayerStats(fangraphsId);
         setStatsLoading(false);
         
-        if (statsResult.success && statsResult.data.length > 0) {
+        if (statsResult.success && statsResult.data && statsResult.data.length > 0) {
           setStats(statsResult.data);
           // Set the most recent season as default
           const mostRecent = statsResult.data.reduce((prev, current) => 
@@ -41,7 +43,7 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
           setSelectedSeason(mostRecent.season);
         }
       } else {
-        setError(result.error);
+        setError(result.error || 'Failed to load player details');
       }
       
       setIsLoading(false);
@@ -95,11 +97,6 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
             </div>
 
             <div className={styles.details}>
-              <div className={styles.detailRow}>
-                <span className={styles.label}>MLB ID:</span>
-                <span className={styles.value}>{player.id}</span>
-              </div>
-              
               {player.first_name && (
                 <div className={styles.detailRow}>
                   <span className={styles.label}>First Name:</span>
@@ -125,27 +122,6 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
                 <div className={styles.detailRow}>
                   <span className={styles.label}>Last Year in MLB:</span>
                   <span className={styles.value}>{player.mlb_played_last}</span>
-                </div>
-              )}
-
-              {player.key_retro && (
-                <div className={styles.detailRow}>
-                  <span className={styles.label}>Retrosheet ID:</span>
-                  <span className={styles.value}>{player.key_retro}</span>
-                </div>
-              )}
-
-              {player.key_bbref && (
-                <div className={styles.detailRow}>
-                  <span className={styles.label}>Baseball Reference ID:</span>
-                  <span className={styles.value}>{player.key_bbref}</span>
-                </div>
-              )}
-
-              {player.key_fangraphs && (
-                <div className={styles.detailRow}>
-                  <span className={styles.label}>Fangraphs ID:</span>
-                  <span className={styles.value}>{player.key_fangraphs}</span>
                 </div>
               )}
             </div>
@@ -192,93 +168,39 @@ export default function PlayerCard({ playerId, onClose }: PlayerCardProps) {
 
                     return (
                       <div className={styles.statsGrid}>
-                        {/* Basic Stats */}
-                        <div className={styles.statsCategory}>
-                          <h4 className={styles.categoryTitle}>Basic</h4>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>AVG</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.avg)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>OBP</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.obp)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>SLG</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.slg)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>OPS</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.ops)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>HR</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.home_runs, 0)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>RBI</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.rbi, 0)}</span>
-                          </div>
-                        </div>
+                        <StatsCategory title="Basic">
+                          <StatItem label="AVG" value={formatStat(currentStats.avg)} />
+                          <StatItem label="OBP" value={formatStat(currentStats.obp)} />
+                          <StatItem label="SLG" value={formatStat(currentStats.slg)} />
+                          <StatItem label="OPS" value={formatStat(currentStats.ops)} />
+                          <StatItem label="HR" value={formatStat(currentStats.home_runs, 0)} />
+                          <StatItem label="RBI" value={formatStat(currentStats.rbi, 0)} />
+                        </StatsCategory>
 
-                        {/* Advanced Stats */}
-                        <div className={styles.statsCategory}>
-                          <h4 className={styles.categoryTitle}>Advanced</h4>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>K%</span>
-                            <span className={styles.statValue}>{formatPercent(currentStats.k_percent)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>BB%</span>
-                            <span className={styles.statValue}>{formatPercent(currentStats.bb_percent)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>ISO</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.iso)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>wOBA</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.woba)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>wRC+</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.wrc_plus, 0)}</span>
-                          </div>
-                          <div className={styles.statItem}>
-                            <span className={styles.statLabel}>WAR</span>
-                            <span className={styles.statValue}>{formatStat(currentStats.war, 1)}</span>
-                          </div>
-                        </div>
+                        <StatsCategory title="Advanced">
+                          <StatItem label="K%" value={formatPercent(currentStats.k_percent)} />
+                          <StatItem label="BB%" value={formatPercent(currentStats.bb_percent)} />
+                          <StatItem label="ISO" value={formatStat(currentStats.iso)} />
+                          <StatItem label="wOBA" value={formatStat(currentStats.woba)} />
+                          <StatItem label="wRC+" value={formatStat(currentStats.wrc_plus, 0)} />
+                          <StatItem label="WAR" value={formatStat(currentStats.war, 1)} />
+                        </StatsCategory>
 
-                        {/* Statcast Metrics */}
                         {(currentStats.barrel_percent || currentStats.hard_hit_percent || currentStats.avg_exit_velocity) && (
-                          <div className={styles.statsCategory}>
-                            <h4 className={styles.categoryTitle}>Statcast</h4>
+                          <StatsCategory title="Statcast">
                             {currentStats.barrel_percent && (
-                              <div className={styles.statItem}>
-                                <span className={styles.statLabel}>Barrel%</span>
-                                <span className={styles.statValue}>{formatPercent(currentStats.barrel_percent)}</span>
-                              </div>
+                              <StatItem label="Barrel%" value={formatPercent(currentStats.barrel_percent)} />
                             )}
                             {currentStats.hard_hit_percent && (
-                              <div className={styles.statItem}>
-                                <span className={styles.statLabel}>HardHit%</span>
-                                <span className={styles.statValue}>{formatPercent(currentStats.hard_hit_percent)}</span>
-                              </div>
+                              <StatItem label="HardHit%" value={formatPercent(currentStats.hard_hit_percent)} />
                             )}
                             {currentStats.avg_exit_velocity && (
-                              <div className={styles.statItem}>
-                                <span className={styles.statLabel}>EV</span>
-                                <span className={styles.statValue}>{formatStat(currentStats.avg_exit_velocity, 1)}</span>
-                              </div>
+                              <StatItem label="EV" value={formatStat(currentStats.avg_exit_velocity, 1)} />
                             )}
                             {currentStats.xwoba && (
-                              <div className={styles.statItem}>
-                                <span className={styles.statLabel}>xwOBA</span>
-                                <span className={styles.statValue}>{formatStat(currentStats.xwoba)}</span>
-                              </div>
+                              <StatItem label="xwOBA" value={formatStat(currentStats.xwoba)} />
                             )}
-                          </div>
+                          </StatsCategory>
                         )}
                       </div>
                     );
