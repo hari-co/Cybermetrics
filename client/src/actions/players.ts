@@ -60,5 +60,17 @@ export const playerActions = {
       };
     }
   },
+
+  getPlayerStats: async (fangraphsId: number, season?: number) => {
+    try {
+      const stats = await playersApi.getPlayerStats(fangraphsId, season);
+      return { success: true, data: stats };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to fetch player stats",
+      };
+    }
+  },
 };
 

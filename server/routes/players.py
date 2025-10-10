@@ -36,3 +36,9 @@ async def get_saved_player(player_id: str, current_user: str = Depends(get_curre
 async def delete_saved_player(player_id: str, current_user: str = Depends(get_current_user)):
     """Delete a player from the current user's saved players collection"""
     return await saved_players_service.delete_player(current_user, player_id)
+
+@router.post("/search/refresh", tags=["search"])
+async def refresh_search_cache():
+    """Refresh the player search cache from Firebase (call after updating player stats)"""
+    player_search_service.refresh_cache()
+    return {"message": "Search cache refreshed successfully"}

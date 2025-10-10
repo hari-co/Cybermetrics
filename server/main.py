@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config.settings import settings
-from routes import auth_router, health_router, players_router
+from routes import auth_router, health_router, players_router, player_stats_router
 
 # Initialize FastAPI app
 app = FastAPI(title="Cybermetrics API")
@@ -19,6 +19,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(players_router)
+app.include_router(player_stats_router)
 
 if __name__ == "__main__":
     import uvicorn
