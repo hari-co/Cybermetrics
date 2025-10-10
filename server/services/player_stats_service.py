@@ -19,6 +19,8 @@ class PlayerStatsService:
         self._update_lock = asyncio.Lock()
         self._is_updating = False
         self._executor = ThreadPoolExecutor(max_workers=1)  # Run blocking I/O in thread
+        self._batch_size = 100  # Process players in batches to avoid rate limits
+        self._batch_delay = 2.0  # Delay between batches (seconds)
     
     def _rate_limit(self):
         """Simple rate limiting decorator"""
@@ -60,12 +62,17 @@ class PlayerStatsService:
         async with self._update_lock:
             self._is_updating = True
             try:
-                return await self._perform_update(start_year, end_year, min_pa)
+                # Run entire update process in thread to avoid blocking
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(
+                    self._executor,
+                    lambda: self._perform_update_sync(start_year, end_year, min_pa)
+                )
             finally:
                 self._is_updating = False
     
-    async def _perform_update(self, start_year: Optional[int], end_year: Optional[int], min_pa: int = 1) -> UpdatePlayerStatsResponse:
-        """Internal method to perform the actual update"""
+    def _perform_update_sync(self, start_year: Optional[int], end_year: Optional[int], min_pa: int = 1) -> UpdatePlayerStatsResponse:
+        """Internal method to perform the actual update (runs in thread pool)"""
         try:
             # Default to current year if not provided
             current_year = datetime.now().year
@@ -92,54 +99,62 @@ class PlayerStatsService:
                 print(f"\nFetching stats for {season} season...")
                 self._rate_limit()
                 
-                # Fetch batting stats from Fangraphs (run in thread to avoid blocking)
-                loop = asyncio.get_event_loop()
-                stats_df = await loop.run_in_executor(
-                    self._executor,
-                    lambda: fg_batting_data(season, season, qual=min_pa, split_seasons=True)
-                )
+                # Fetch batting stats from Fangraphs
+                stats_df = fg_batting_data(season, season, qual=min_pa, split_seasons=True)
                 
                 print(f"Found {len(stats_df)} players for {season} season")
                 
-                # Process each player
-                for idx, row in stats_df.iterrows():
-                    try:
-                        # Get Fangraphs ID (always available)
-                        fangraphs_id = int(row['IDfg'])
-                        player_name = str(row.get('Name', ''))
-                        mlb_id = None  # Skip MLB ID (broken endpoint)
-                        
-                        # Map dataframe columns to our model
-                        player_stats = self._map_stats_to_model(row, fangraphs_id, mlb_id, season)
-                        
-                        # Store in Firebase: players/{fangraphs_id}
-                        player_ref = self.db.collection('players').document(str(fangraphs_id))
-                        
-                        # Store/update player info (static fields)
-                        player_info = {
-                            'fangraphs_id': fangraphs_id,
-                            'name': player_name,
-                        }
-                        if mlb_id:
-                            player_info['mlb_player_id'] = mlb_id
-                        
-                        # Update player document
-                        player_ref.set(player_info, merge=True)
-                        
-                        # Store season stats in subcollection
-                        season_ref = player_ref.collection('seasons').document(str(season))
-                        stats_dict = player_stats.model_dump()
-                        season_ref.set(stats_dict)
-                        
-                        total_players_updated += 1
-                        
-                        if total_players_updated % 50 == 0:
-                            print(f"Progress: {total_players_updated} players updated...")
-                        
-                    except Exception as e:
-                        print(f"Error processing player {row.get('Name', 'Unknown')}: {str(e)}")
-                        total_players_with_errors += 1
-                        continue
+                # Process players in batches to avoid Firebase rate limits
+                total_players = len(stats_df)
+                for batch_num in range(0, total_players, self._batch_size):
+                    batch_end = min(batch_num + self._batch_size, total_players)
+                    batch_df = stats_df.iloc[batch_num:batch_end]
+                    
+                    print(f"Processing batch {batch_num//self._batch_size + 1}/{(total_players + self._batch_size - 1)//self._batch_size} ({len(batch_df)} players)...")
+                    
+                    # Process each player in the batch
+                    for idx, row in batch_df.iterrows():
+                        try:
+                            # Get Fangraphs ID (always available)
+                            fangraphs_id = int(row['IDfg'])
+                            player_name = str(row.get('Name', ''))
+                            mlb_id = None  # Skip MLB ID (broken endpoint)
+                            
+                            # Map dataframe columns to our model
+                            player_stats = self._map_stats_to_model(row, fangraphs_id, mlb_id, season)
+                            
+                            # Store in Firebase: players/{fangraphs_id}
+                            player_ref = self.db.collection('players').document(str(fangraphs_id))
+                            
+                            # Store/update player info (static fields)
+                            player_info = {
+                                'fangraphs_id': fangraphs_id,
+                                'name': player_name,
+                            }
+                            if mlb_id:
+                                player_info['mlb_player_id'] = mlb_id
+                            
+                            # Update player document
+                            player_ref.set(player_info, merge=True)
+                            
+                            # Store season stats in subcollection
+                            season_ref = player_ref.collection('seasons').document(str(season))
+                            stats_dict = player_stats.model_dump()
+                            season_ref.set(stats_dict)
+                            
+                            total_players_updated += 1
+                            
+                        except Exception as e:
+                            print(f"Error processing player {row.get('Name', 'Unknown')}: {str(e)}")
+                            total_players_with_errors += 1
+                            continue
+                    
+                    print(f"Batch complete. Total: {total_players_updated} players updated")
+                    
+                    # Rate limit between batches to avoid Firebase quota
+                    if batch_end < total_players:
+                        print(f"Waiting {self._batch_delay}s before next batch...")
+                        time.sleep(self._batch_delay)
             
             return UpdatePlayerStatsResponse(
                 message=f"Successfully updated player stats for {len(seasons)} season(s)",
